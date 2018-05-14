@@ -73,6 +73,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -90,6 +91,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -1152,7 +1154,8 @@ public class OracleCDCSource extends BaseSource {
       }
 
       schemasAndTables = new ArrayList<>();
-      for (SchemaTableConfigBean tables : configBean.baseConfigBean.schemaTableConfigs) {
+      List<SchemaTableConfigBean> expandedSchemas = expandListOfSchemas();
+      for (SchemaTableConfigBean tables : expandedSchemas) {
 
         tables.schema = configBean.baseConfigBean.caseSensitive ? tables.schema : tables.schema.toUpperCase();
         tables.table = configBean.baseConfigBean.caseSensitive ? tables.table : tables.table.toUpperCase();
@@ -1324,6 +1327,29 @@ public class OracleCDCSource extends BaseSource {
     version = useLocalBuffering ? VERSION_UNCOMMITTED : VERSION_STR;
     delay = getContext().createGauge("Read Lag (seconds)");
     return issues;
+  }
+
+  private List<SchemaTableConfigBean> expandListOfSchemas()
+  {
+    List<SchemaTableConfigBean> expandedSchemas = new ArrayList<>();
+    configBean.baseConfigBean.schemaTableConfigs
+            .stream()
+            .map(baseConfig -> Arrays.stream(baseConfig.schema.split(","))
+                    .map(copyBean(baseConfig))
+                    .collect(Collectors.toList()))
+            .forEach(expandedSchemas::addAll);
+    return expandedSchemas;
+  }
+
+  private Function<String,SchemaTableConfigBean> copyBean(SchemaTableConfigBean baseBean)
+  {
+    return schema -> {
+      SchemaTableConfigBean newBean = new SchemaTableConfigBean();
+      newBean.schema = schema;
+      newBean.excludePattern = baseBean.excludePattern;
+      newBean.table = baseBean.table;
+      return newBean;
+    };
   }
 
   /**

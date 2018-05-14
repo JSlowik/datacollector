@@ -37,10 +37,14 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 public class TableJdbcSource extends AbstractTableJdbcSource {
   public static final String OFFSET_VERSION =
@@ -100,7 +104,8 @@ public class TableJdbcSource extends AbstractTableJdbcSource {
   @Override
   protected Map<String, TableContext> listTablesForConfig(PushSource.Context context, List<ConfigIssue> issues, ConnectionManager connectionManager) throws SQLException, StageException {
     Map<String, TableContext> allTableContexts = new HashMap<>();
-    for (TableConfigBean tableConfigBean : tableJdbcConfigBean.tableConfigs) {
+    List<TableConfigBean> expandedSchemas = expandAllSchemas();
+    for(TableConfigBean tableConfigBean : expandedSchemas){
       //No duplicates even though a table matches multiple configurations, we will add it only once.
       allTableContexts.putAll(
           TableContextUtil.listTablesForConfig(
@@ -176,5 +181,36 @@ public class TableJdbcSource extends AbstractTableJdbcSource {
       LOG.info("Removing now outdated offset keys: {}", offsetKeysToRemove);
       offsetKeysToRemove.forEach(tableName -> getContext().commitOffset(tableName, null));
     }
+  }
+
+  private List<TableConfigBean> expandAllSchemas()
+  {
+    List<TableConfigBean> configList = new ArrayList<>();
+
+    tableJdbcConfigBean.tableConfigs
+            .stream()
+            .map(tableConfigBean -> Arrays.stream(tableConfigBean.schema.split(","))
+                    .map(copyBean(tableConfigBean))
+                    .collect(Collectors.toList()))
+            .forEach(configList::addAll);
+    return configList;
+
+  }
+
+  private Function<String,TableConfigBean> copyBean(TableConfigBean baseBean)
+  {
+    return schema ->
+    {
+      TableConfigBean newBean = new TableConfigBean();
+      newBean.schema = schema;
+      newBean.tablePattern = baseBean.tablePattern;
+      newBean.tableExclusionPattern = baseBean.tableExclusionPattern;
+      newBean.overrideDefaultOffsetColumns = baseBean.overrideDefaultOffsetColumns;
+      newBean.offsetColumnToInitialOffsetValue = baseBean.offsetColumnToInitialOffsetValue;
+      newBean.enableNonIncremental = baseBean.enableNonIncremental;
+      newBean.partitioningMode = baseBean.partitioningMode;
+      newBean.extraOffsetColumnConditions = baseBean.extraOffsetColumnConditions;
+      return newBean;
+    };
   }
 }
