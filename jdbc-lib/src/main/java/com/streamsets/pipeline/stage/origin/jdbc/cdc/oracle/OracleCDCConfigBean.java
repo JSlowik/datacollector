@@ -54,6 +54,17 @@ public class OracleCDCConfigBean {
 
   @ConfigDef(
       required = true,
+      type = ConfigDef.Type.BOOLEAN,
+      label = "Missing Log File Recovery",
+      description = "If the log file is removed for the current window, reset to the first available, rather than throwing error",
+      displayPosition = 180,
+      group = "CDC",
+      defaultValue = "false"
+  )
+  public boolean logFileRecovery;
+
+  @ConfigDef(
+      required = true,
       type = ConfigDef.Type.STRING,
       label = "Start Date",
       description = "Datetime to use for the initial change. Use the following format: DD-MM-YYYY HH24:MM:SS.",
