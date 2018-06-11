@@ -424,10 +424,8 @@ public class OracleCDCSource extends BaseSource {
 
     Offset offset = null;
     try(PreparedStatement ps = connection.prepareStatement(GET_EARLIEST_AVAILABLE_OFFSET);
-        ResultSet rs = ps.executeQuery())
-    {
-      if(rs.next())
-      {
+        ResultSet rs = ps.executeQuery()) {
+      if(rs.next()) {
         Timestamp t = rs.getTimestamp("FIRST_TIME");
         BigDecimal firstSCN = rs.getBigDecimal("FIRST_CHANGE");
         offset = new Offset(version, t.toLocalDateTime(), firstSCN.toPlainString(), 0);
