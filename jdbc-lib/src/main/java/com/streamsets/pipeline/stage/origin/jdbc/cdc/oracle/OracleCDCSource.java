@@ -1345,7 +1345,7 @@ public class OracleCDCSource extends BaseSource {
   {
     return schema -> {
       SchemaTableConfigBean newBean = new SchemaTableConfigBean();
-      newBean.schema = schema;
+      newBean.schema = schema.trim();
       newBean.excludePattern = baseBean.excludePattern;
       newBean.table = baseBean.table;
       return newBean;
