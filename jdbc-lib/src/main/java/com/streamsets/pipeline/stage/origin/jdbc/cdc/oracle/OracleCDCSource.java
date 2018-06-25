@@ -96,6 +96,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static com.streamsets.pipeline.lib.jdbc.JdbcErrors.JDBC_00;
+import static com.streamsets.pipeline.lib.jdbc.JdbcErrors.JDBC_02;
 import static com.streamsets.pipeline.lib.jdbc.JdbcErrors.JDBC_16;
 import static com.streamsets.pipeline.lib.jdbc.JdbcErrors.JDBC_40;
 import static com.streamsets.pipeline.lib.jdbc.JdbcErrors.JDBC_404;
@@ -225,6 +226,7 @@ public class OracleCDCSource extends BaseSource {
     UNKNOWN
   }
 
+  private static final String GET_EARLIEST_AVAILABLE_OFFSET = "SELECT min(FIRST_TIME) as FIRST_TIME, min(FIRST_CHANGE#) as FIRST_CHANGE FROM V$LOG where STATUS = 'CURRENT'";
   private static final String GET_TIMESTAMPS_FROM_LOGMNR_CONTENTS = "SELECT TIMESTAMP FROM V$LOGMNR_CONTENTS ORDER BY TIMESTAMP";
   private static final String OFFSET_DELIM = "::";
   private static final int RESULTSET_CLOSED_AS_LOGMINER_SESSION_CLOSED = 1306;
@@ -292,6 +294,7 @@ public class OracleCDCSource extends BaseSource {
     int recordGenerationAttempts = 0;
     boolean recordsProduced = false;
     String nextOffset = StringUtils.trimToEmpty(lastSourceOffset);
+    String offset = lastSourceOffset;
     pollForStageExceptions();
     while (!getContext().isStopped() && !recordsProduced && recordGenerationAttempts++ < MAX_RECORD_GENERATION_ATTEMPTS) {
       if (!sentInitialSchemaEvent) {
@@ -304,7 +307,7 @@ public class OracleCDCSource extends BaseSource {
 
       try {
         if (!generationStarted) {
-          startGeneratorThread(lastSourceOffset);
+          startGeneratorThread(offset);
         }
       } catch (StageException ex) {
         LOG.error("Error while attempting to produce records", ex);
@@ -314,6 +317,18 @@ public class OracleCDCSource extends BaseSource {
         if (getContext().isPreview() && ex instanceof SQLException) {
           LOG.warn("Exception while previewing", ex);
           return NULL;
+        }
+        else if(ex instanceof SQLException && ((SQLException)ex).getErrorCode() == MISSING_LOG_FILE && configBean.logFileRecovery)
+        {
+          LOG.info("Attempting to reset to first valid offset");
+          String firstAvailable = resetCDCToFirstAvailable();
+          if(offset.equalsIgnoreCase(firstAvailable)) {
+            LOG.error("No valid redo log available");
+            throw new StageException(JDBC_86,ex);
+          }
+          else {
+            offset = firstAvailable;
+          }
         }
         LOG.error("Error while attempting to produce records", ex);
         errorRecordHandler.onError(JDBC_44, Throwables.getStackTraceAsString(ex));
@@ -357,47 +372,41 @@ public class OracleCDCSource extends BaseSource {
   private void startGeneratorThread(String lastSourceOffset) throws StageException, SQLException {
     Offset offset = null;
     LocalDateTime startTimestamp;
-    try {
-      startLogMnrForRedoDict();
-      if (!StringUtils.isEmpty(lastSourceOffset)) {
-        offset = new Offset(lastSourceOffset);
-        if (lastSourceOffset.startsWith("v3")) {
-          if (!useLocalBuffering) {
-            throw new StageException(JDBC_82);
-          }
-          startTimestamp = offset.timestamp.minusSeconds(configBean.txnWindow);
-        } else {
-          if (useLocalBuffering) {
-            throw new StageException(JDBC_83);
-          }
-          startTimestamp = getDateForSCN(new BigDecimal(offset.scn));
-          offset.timestamp = startTimestamp;
+    startLogMnrForRedoDict();
+    if (!StringUtils.isEmpty(lastSourceOffset)) {
+      offset = new Offset(lastSourceOffset);
+      if (lastSourceOffset.startsWith("v3")) {
+        if (!useLocalBuffering) {
+          throw new StageException(JDBC_82);
         }
-        adjustStartTimeAndStartLogMnr(startTimestamp);
-      } else { // reset the start date only if it not set.
-        if (configBean.startValue != StartValues.SCN) {
-          LocalDateTime startDate;
-          if (configBean.startValue == StartValues.DATE) {
-            startDate = LocalDateTime.parse(configBean.startDate, dateTimeColumnHandler.dateFormatter);
-          } else {
-            startDate = nowAtDBTz();
-          }
-          startDate = adjustStartTimeAndStartLogMnr(startDate);
-          offset = new Offset(version, startDate, ZERO, 0);
-        } else {
-          BigDecimal startCommitSCN = new BigDecimal(configBean.startSCN);
-          startLogMnrSCNToDate.setBigDecimal(1, startCommitSCN);
-          final LocalDateTime start = getDateForSCN(startCommitSCN);
-          LocalDateTime endTime = getEndTimeForStartTime(start);
-          startLogMnrSCNToDate.setString(2, endTime.format(dateTimeColumnHandler.dateFormatter));
-          startLogMnrSCNToDate.execute();
-          offset = new Offset(version, start, startCommitSCN.toPlainString(), 0);
+        startTimestamp = offset.timestamp.minusSeconds(configBean.txnWindow);
+      } else {
+        if (useLocalBuffering) {
+          throw new StageException(JDBC_83);
         }
+        startTimestamp = getDateForSCN(new BigDecimal(offset.scn));
+        offset.timestamp = startTimestamp;
       }
-    } catch (SQLException ex) {
-      LOG.error("SQLException while trying to setup record generator thread", ex);
-      generationStarted = false;
-      return;
+      adjustStartTimeAndStartLogMnr(startTimestamp);
+    } else { // reset the start date only if it not set.
+      if (configBean.startValue != StartValues.SCN) {
+        LocalDateTime startDate;
+        if (configBean.startValue == StartValues.DATE) {
+          startDate = LocalDateTime.parse(configBean.startDate, dateTimeColumnHandler.dateFormatter);
+        } else {
+          startDate = nowAtDBTz();
+        }
+        startDate = adjustStartTimeAndStartLogMnr(startDate);
+        offset = new Offset(version, startDate, ZERO, 0);
+      } else {
+        BigDecimal startCommitSCN = new BigDecimal(configBean.startSCN);
+        startLogMnrSCNToDate.setBigDecimal(1, startCommitSCN);
+        final LocalDateTime start = getDateForSCN(startCommitSCN);
+        LocalDateTime endTime = getEndTimeForStartTime(start);
+        startLogMnrSCNToDate.setString(2, endTime.format(dateTimeColumnHandler.dateFormatter));
+        startLogMnrSCNToDate.execute();
+        offset = new Offset(version, start, startCommitSCN.toPlainString(), 0);
+      }
     }
     final Offset os = offset;
     final PreparedStatement select = selectFromLogMnrContents;
@@ -410,6 +419,26 @@ public class OracleCDCSource extends BaseSource {
       }
     });
   }
+
+  private String resetCDCToFirstAvailable()
+  {
+
+    Offset offset = null;
+    try(PreparedStatement ps = connection.prepareStatement(GET_EARLIEST_AVAILABLE_OFFSET);
+        ResultSet rs = ps.executeQuery()) {
+      if(rs.next()) {
+        Timestamp t = rs.getTimestamp("FIRST_TIME");
+        BigDecimal firstSCN = rs.getBigDecimal("FIRST_CHANGE");
+        offset = new Offset(version, t.toLocalDateTime(), firstSCN.toPlainString(), 0);
+      }
+    }
+    catch(SQLException ex){
+      LOG.warn("Could not determine oldest available redo log time");
+      addToStageExceptionsQueue(new StageException(JDBC_02, ex));
+    }
+    return offset == null ? "" : offset.toString();
+  }
+
 
   @NotNull
   private LocalDateTime adjustStartTimeAndStartLogMnr(LocalDateTime startDate) throws SQLException, StageException {
