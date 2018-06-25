@@ -18,6 +18,7 @@ package com.streamsets.pipeline.stage.origin.jdbc.cdc.oracle;
 import com.codahale.metrics.Gauge;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.streamsets.pipeline.api.BatchMaker;
@@ -186,6 +187,7 @@ public class OracleCDCSource extends BaseSource {
   public static final String STARTED_LOG_MINER_WITH_START_SCN_AND_END_SCN = "Started LogMiner with start SCN: {} and end SCN: {}";
   public static final String REDO_SELECT_QUERY = "Redo select query for selectFromLogMnrContents = {}";
   public static final String CURRENT_LATEST_SCN_IS = "Current latest SCN is: {}";
+  private static final String REGEX_COMMAS_OUTSIDE_QUOTES = ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)";
 
   public static final int LOGMINER_START_MUST_BE_CALLED = 1306;
   private DateTimeColumnHandler dateTimeColumnHandler;
@@ -213,7 +215,6 @@ public class OracleCDCSource extends BaseSource {
   private ZoneId zoneId;
   private Record dummyRecord;
   private boolean useLocalBuffering;
-
   private Gauge<Map<String, Object>> delay;
   private CallableStatement startLogMnrSCNToDate;
 
@@ -1332,24 +1333,23 @@ public class OracleCDCSource extends BaseSource {
   private List<SchemaTableConfigBean> expandListOfSchemas()
   {
     List<SchemaTableConfigBean> expandedSchemas = new ArrayList<>();
-    configBean.baseConfigBean.schemaTableConfigs
-            .stream()
-            .map(baseConfig -> Arrays.stream(baseConfig.schema.split(","))
-                    .map(copyBean(baseConfig))
-                    .collect(Collectors.toList()))
-            .forEach(expandedSchemas::addAll);
+    for (SchemaTableConfigBean baseConfig : configBean.baseConfigBean.schemaTableConfigs) {
+      for(String s: Splitter.on(Pattern.compile(REGEX_COMMAS_OUTSIDE_QUOTES)).split(baseConfig.schema)){
+        SchemaTableConfigBean schemaTableConfigBean = copyBean(baseConfig,s);
+        expandedSchemas.add(schemaTableConfigBean);
+      }
+    }
     return expandedSchemas;
   }
 
-  private Function<String,SchemaTableConfigBean> copyBean(SchemaTableConfigBean baseBean)
+  @NotNull
+  private SchemaTableConfigBean copyBean(SchemaTableConfigBean baseBean, String newSchema)
   {
-    return schema -> {
       SchemaTableConfigBean newBean = new SchemaTableConfigBean();
-      newBean.schema = schema.trim();
+      newBean.schema = newSchema.trim();
       newBean.excludePattern = baseBean.excludePattern;
       newBean.table = baseBean.table;
       return newBean;
-    };
   }
 
   /**
