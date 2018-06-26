@@ -197,6 +197,7 @@ public class OracleCDCSource extends BaseSource {
 
   private PreparedStatement selectFromLogMnrContents;
   private static final int MISSING_LOG_FILE = 1291;
+  private static final int NO_LOG_FOUND = 1292;
   private static final int QUERY_TIMEOUT = 1013;
 
   private final Lock bufferedRecordsLock = new ReentrantLock();
@@ -318,15 +319,13 @@ public class OracleCDCSource extends BaseSource {
           LOG.warn("Exception while previewing", ex);
           return NULL;
         }
-        else if(ex instanceof SQLException && ((SQLException)ex).getErrorCode() == MISSING_LOG_FILE && configBean.logFileRecovery)
-        {
+        else if(ex instanceof SQLException && configBean.logFileRecovery) {
           LOG.info("Attempting to reset to first valid offset");
           String firstAvailable = resetCDCToFirstAvailable();
           if(offset.equalsIgnoreCase(firstAvailable)) {
             LOG.error("No valid redo log available");
             throw new StageException(JDBC_86,ex);
-          }
-          else {
+          } else {
             offset = firstAvailable;
           }
         }
@@ -372,41 +371,53 @@ public class OracleCDCSource extends BaseSource {
   private void startGeneratorThread(String lastSourceOffset) throws StageException, SQLException {
     Offset offset = null;
     LocalDateTime startTimestamp;
-    startLogMnrForRedoDict();
-    if (!StringUtils.isEmpty(lastSourceOffset)) {
-      offset = new Offset(lastSourceOffset);
-      if (lastSourceOffset.startsWith("v3")) {
-        if (!useLocalBuffering) {
-          throw new StageException(JDBC_82);
-        }
-        startTimestamp = offset.timestamp.minusSeconds(configBean.txnWindow);
-      } else {
-        if (useLocalBuffering) {
-          throw new StageException(JDBC_83);
-        }
-        startTimestamp = getDateForSCN(new BigDecimal(offset.scn));
-        offset.timestamp = startTimestamp;
-      }
-      adjustStartTimeAndStartLogMnr(startTimestamp);
-    } else { // reset the start date only if it not set.
-      if (configBean.startValue != StartValues.SCN) {
-        LocalDateTime startDate;
-        if (configBean.startValue == StartValues.DATE) {
-          startDate = LocalDateTime.parse(configBean.startDate, dateTimeColumnHandler.dateFormatter);
+    try{
+      startLogMnrForRedoDict();
+      if (!StringUtils.isEmpty(lastSourceOffset)) {
+        offset = new Offset(lastSourceOffset);
+        if (lastSourceOffset.startsWith("v3")) {
+          if (!useLocalBuffering) {
+            throw new StageException(JDBC_82);
+          }
+          startTimestamp = offset.timestamp.minusSeconds(configBean.txnWindow);
         } else {
-          startDate = nowAtDBTz();
+          if (useLocalBuffering) {
+            throw new StageException(JDBC_83);
+          }
+          startTimestamp = getDateForSCN(new BigDecimal(offset.scn));
+          offset.timestamp = startTimestamp;
         }
-        startDate = adjustStartTimeAndStartLogMnr(startDate);
-        offset = new Offset(version, startDate, ZERO, 0);
-      } else {
-        BigDecimal startCommitSCN = new BigDecimal(configBean.startSCN);
-        startLogMnrSCNToDate.setBigDecimal(1, startCommitSCN);
-        final LocalDateTime start = getDateForSCN(startCommitSCN);
-        LocalDateTime endTime = getEndTimeForStartTime(start);
-        startLogMnrSCNToDate.setString(2, endTime.format(dateTimeColumnHandler.dateFormatter));
-        startLogMnrSCNToDate.execute();
-        offset = new Offset(version, start, startCommitSCN.toPlainString(), 0);
+        adjustStartTimeAndStartLogMnr(startTimestamp);
+      } else { // reset the start date only if it not set.
+        if (configBean.startValue != StartValues.SCN) {
+          LocalDateTime startDate;
+          if (configBean.startValue == StartValues.DATE) {
+            startDate = LocalDateTime.parse(configBean.startDate, dateTimeColumnHandler.dateFormatter);
+          } else {
+            startDate = nowAtDBTz();
+          }
+          startDate = adjustStartTimeAndStartLogMnr(startDate);
+          offset = new Offset(version, startDate, ZERO, 0);
+        } else {
+          BigDecimal startCommitSCN = new BigDecimal(configBean.startSCN);
+          startLogMnrSCNToDate.setBigDecimal(1, startCommitSCN);
+          final LocalDateTime start = getDateForSCN(startCommitSCN);
+          LocalDateTime endTime = getEndTimeForStartTime(start);
+          startLogMnrSCNToDate.setString(2, endTime.format(dateTimeColumnHandler.dateFormatter));
+          startLogMnrSCNToDate.execute();
+          offset = new Offset(version, start, startCommitSCN.toPlainString(), 0);
+        }
       }
+    } catch (SQLException ex) {
+      //If the exception is due to a missing log file, bubble it up so possible
+      //recovery could be attempted.
+      if(ex.getErrorCode() == MISSING_LOG_FILE || ex.getErrorCode() == NO_LOG_FOUND)
+      {
+        throw new SQLException(ex);
+      }
+      LOG.error("SQLException while trying to setup record generator thread", ex);
+      generationStarted = false;
+      return;
     }
     final Offset os = offset;
     final PreparedStatement select = selectFromLogMnrContents;
