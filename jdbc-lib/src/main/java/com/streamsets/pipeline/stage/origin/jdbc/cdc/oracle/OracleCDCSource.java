@@ -1193,7 +1193,8 @@ public class OracleCDCSource extends BaseSource {
       }
 
       schemasAndTables = new ArrayList<>();
-      for (SchemaTableConfigBean tables : configBean.baseConfigBean.schemaTableConfigs) {
+      List<SchemaTableConfigBean> expandedSchemas = expandListOfSchemas();
+      for (SchemaTableConfigBean tables : expandedSchemas) {
 
         tables.schema = configBean.baseConfigBean.caseSensitive ? tables.schema : tables.schema.toUpperCase();
         tables.table = configBean.baseConfigBean.caseSensitive ? tables.table : tables.table.toUpperCase();
