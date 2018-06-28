@@ -57,7 +57,7 @@ public class OracleCDCConfigBean {
       type = ConfigDef.Type.BOOLEAN,
       label = "Attempt missing log file recovery",
       description = "If the log file is removed for the current window, attempt recovery by resetting the offset to " +
-          "the first available time/SCN",
+          "the first available time/SCN of the CURRENT redo log.",
       displayPosition = 45,
       group = "CDC",
       defaultValue = "false"

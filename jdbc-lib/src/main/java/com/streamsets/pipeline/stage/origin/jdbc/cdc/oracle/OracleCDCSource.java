@@ -326,6 +326,7 @@ public class OracleCDCSource extends BaseSource {
             throw new StageException(JDBC_86,ex);
           } else {
             offset = firstAvailable;
+            continue;
           }
         }
         LOG.error("Error while attempting to produce records", ex);
