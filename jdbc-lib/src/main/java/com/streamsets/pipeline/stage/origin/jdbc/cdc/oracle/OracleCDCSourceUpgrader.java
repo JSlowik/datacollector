@@ -79,7 +79,13 @@ public class OracleCDCSourceUpgrader implements StageUpgrader {
         }
         // fall through
       case 8:
-        return upgradeV8ToV9(configs);
+        configs = upgradeV8ToV9(configs);
+        if(toVersion == 9){
+          return configs;
+        }
+        // fall through
+      case 9:
+        return upgradeV9ToV10(configs);
 
       default:
         throw new IllegalStateException(Utils.format("Unexpected fromVersion {}", fromVersion));
@@ -171,5 +177,10 @@ public class OracleCDCSourceUpgrader implements StageUpgrader {
     return configs.parallelStream()
         .filter(config -> !config.getName().equals("oracleCDCConfigBean.queryTimeout"))
         .collect(Collectors.toList());
+  }
+
+  private static List<Config> upgradeV9ToV10(List<Config> configs) {
+    configs.add(new Config("oracleCDCConfigBean.logFileRecovery", false));
+    return configs;
   }
 }

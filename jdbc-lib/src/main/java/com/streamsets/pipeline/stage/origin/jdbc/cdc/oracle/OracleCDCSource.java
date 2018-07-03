@@ -317,11 +317,10 @@ public class OracleCDCSource extends BaseSource {
         if (getContext().isPreview() && ex instanceof SQLException) {
           LOG.warn("Exception while previewing", ex);
           return NULL;
-        }
-        else if(ex instanceof SQLException && configBean.logFileRecovery) {
+        } else if (ex instanceof SQLException && configBean.logFileRecovery) {
           LOG.info("Attempting to reset to first valid offset");
           String firstAvailable = resetCDCToFirstAvailable();
-          if(offset.equalsIgnoreCase(firstAvailable)) {
+          if (offset.equalsIgnoreCase(firstAvailable)) {
             LOG.error("No valid redo log available");
             throw new StageException(JDBC_86,ex);
           } else {
@@ -371,7 +370,7 @@ public class OracleCDCSource extends BaseSource {
   private void startGeneratorThread(String lastSourceOffset) throws StageException, SQLException {
     Offset offset = null;
     LocalDateTime startTimestamp;
-    try{
+    try {
       startLogMnrForRedoDict();
       if (!StringUtils.isEmpty(lastSourceOffset)) {
         offset = new Offset(lastSourceOffset);
@@ -411,9 +410,8 @@ public class OracleCDCSource extends BaseSource {
     } catch (SQLException ex) {
       //If the exception is due to a missing log file, bubble it up so possible
       //recovery could be attempted.
-      if(ex.getErrorCode() == MISSING_LOG_FILE || ex.getErrorCode() == NO_LOG_FOUND)
-      {
-        throw new SQLException(ex);
+      if(ex.getErrorCode() == MISSING_LOG_FILE || ex.getErrorCode() == NO_LOG_FOUND) {
+        throw ex;
       }
       LOG.error("SQLException while trying to setup record generator thread", ex);
       generationStarted = false;
@@ -431,9 +429,7 @@ public class OracleCDCSource extends BaseSource {
     });
   }
 
-  private String resetCDCToFirstAvailable()
-  {
-
+  private String resetCDCToFirstAvailable() {
     Offset offset = null;
     try(PreparedStatement ps = connection.prepareStatement(GET_EARLIEST_AVAILABLE_OFFSET);
         ResultSet rs = ps.executeQuery()) {
@@ -449,7 +445,6 @@ public class OracleCDCSource extends BaseSource {
     }
     return offset == null ? "" : offset.toString();
   }
-
 
   @NotNull
   private LocalDateTime adjustStartTimeAndStartLogMnr(LocalDateTime startDate) throws SQLException, StageException {
