@@ -16,6 +16,7 @@
 package com.streamsets.pipeline.stage.origin.jdbc.table;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.cache.CacheLoader;
 import com.streamsets.pipeline.api.PushSource;
@@ -32,6 +33,8 @@ import com.streamsets.pipeline.lib.jdbc.multithread.TableRuntimeContext;
 import com.streamsets.pipeline.lib.util.OffsetUtil;
 import com.streamsets.pipeline.stage.origin.jdbc.AbstractTableJdbcSource;
 import com.streamsets.pipeline.stage.origin.jdbc.CommonSourceConfigBean;
+import com.streamsets.pipeline.stage.origin.jdbc.cdc.SchemaTableConfigBean;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class TableJdbcSource extends AbstractTableJdbcSource {
@@ -53,6 +57,8 @@ public class TableJdbcSource extends AbstractTableJdbcSource {
   public static final String OFFSET_VERSION_2 = "2";
 
   private static final Logger LOG = LoggerFactory.getLogger(TableJdbcSource.class);
+  private static final String REGEX_COMMAS_OUTSIDE_QUOTES = ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)";
+  private static final Pattern COMMA_SPLIT_PATTERN = Pattern.compile(REGEX_COMMAS_OUTSIDE_QUOTES);
   private final HikariPoolConfigBean hikariConfigBean;
   private final TableJdbcConfigBean tableJdbcConfigBean;
   private final CommonSourceConfigBean commonSourceConfigBean;
@@ -104,7 +110,7 @@ public class TableJdbcSource extends AbstractTableJdbcSource {
   @Override
   protected Map<String, TableContext> listTablesForConfig(PushSource.Context context, List<ConfigIssue> issues, ConnectionManager connectionManager) throws SQLException, StageException {
     Map<String, TableContext> allTableContexts = new HashMap<>();
-    List<TableConfigBean> expandedSchemas = expandAllSchemas();
+    List<TableConfigBean> expandedSchemas = expandListOfSchemas();
     for(TableConfigBean tableConfigBean : expandedSchemas){
       //No duplicates even though a table matches multiple configurations, we will add it only once.
       allTableContexts.putAll(
@@ -183,26 +189,24 @@ public class TableJdbcSource extends AbstractTableJdbcSource {
     }
   }
 
-  private List<TableConfigBean> expandAllSchemas()
+  private List<TableConfigBean> expandListOfSchemas()
   {
-    List<TableConfigBean> configList = new ArrayList<>();
-
-    tableJdbcConfigBean.tableConfigs
-            .stream()
-            .map(tableConfigBean -> Arrays.stream(tableConfigBean.schema.split(","))
-                    .map(copyBean(tableConfigBean))
-                    .collect(Collectors.toList()))
-            .forEach(configList::addAll);
-    return configList;
+    List<TableConfigBean> expandedSchemas = new ArrayList<>();
+    for (TableConfigBean tableConfigBean : tableJdbcConfigBean.tableConfigs) {
+      for(String s: Splitter.on(COMMA_SPLIT_PATTERN).split(tableConfigBean.schema)){
+        TableConfigBean configBean = copyBean(tableConfigBean,s);
+        expandedSchemas.add(configBean);
+      }
+    }
+    return expandedSchemas;
 
   }
 
-  private Function<String,TableConfigBean> copyBean(TableConfigBean baseBean)
+  @NotNull
+  private TableConfigBean copyBean(TableConfigBean baseBean, String newSchema)
   {
-    return schema ->
-    {
       TableConfigBean newBean = new TableConfigBean();
-      newBean.schema = schema;
+      newBean.schema = newSchema;
       newBean.tablePattern = baseBean.tablePattern;
       newBean.tableExclusionPattern = baseBean.tableExclusionPattern;
       newBean.overrideDefaultOffsetColumns = baseBean.overrideDefaultOffsetColumns;
@@ -211,6 +215,5 @@ public class TableJdbcSource extends AbstractTableJdbcSource {
       newBean.partitioningMode = baseBean.partitioningMode;
       newBean.extraOffsetColumnConditions = baseBean.extraOffsetColumnConditions;
       return newBean;
-    };
   }
 }

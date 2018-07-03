@@ -177,6 +177,8 @@ public class OracleCDCSource extends BaseSource {
   private static final String SEQ = "SEQ";
   private static final HashQueue<RecordSequence> EMPTY_LINKED_HASHSET = new InMemoryHashQueue<>(0);
 
+  private static final String REGEX_COMMAS_OUTSIDE_QUOTES = ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)";
+  private static final Pattern COMMA_SPLIT_PATTERN = Pattern.compile(REGEX_COMMAS_OUTSIDE_QUOTES);
   private static final String SENDING_TO_ERROR_AS_CONFIGURED = ". Sending to error as configured";
   private static final String UNSUPPORTED_TO_ERR = JDBC_85.getMessage() + SENDING_TO_ERROR_AS_CONFIGURED;
   private static final String DISCARDING_RECORD_AS_CONFIGURED = ". Discarding record as configured";
@@ -187,7 +189,6 @@ public class OracleCDCSource extends BaseSource {
   public static final String STARTED_LOG_MINER_WITH_START_SCN_AND_END_SCN = "Started LogMiner with start SCN: {} and end SCN: {}";
   public static final String REDO_SELECT_QUERY = "Redo select query for selectFromLogMnrContents = {}";
   public static final String CURRENT_LATEST_SCN_IS = "Current latest SCN is: {}";
-  private static final String REGEX_COMMAS_OUTSIDE_QUOTES = ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)";
 
   public static final int LOGMINER_START_MUST_BE_CALLED = 1306;
   private DateTimeColumnHandler dateTimeColumnHandler;
@@ -1334,8 +1335,8 @@ public class OracleCDCSource extends BaseSource {
   {
     List<SchemaTableConfigBean> expandedSchemas = new ArrayList<>();
     for (SchemaTableConfigBean baseConfig : configBean.baseConfigBean.schemaTableConfigs) {
-      for(String s: Splitter.on(Pattern.compile(REGEX_COMMAS_OUTSIDE_QUOTES)).split(baseConfig.schema)){
-        SchemaTableConfigBean schemaTableConfigBean = copyBean(baseConfig,s);
+      for(String s: Splitter.on(COMMA_SPLIT_PATTERN).split(baseConfig.schema)){
+        SchemaTableConfigBean schemaTableConfigBean = copyBean(baseConfig,s.replaceAll("^\"|\"$", ""));
         expandedSchemas.add(schemaTableConfigBean);
       }
     }
